@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, fmtDate, qs, type AuditEntry } from '../../api';
 import { Alert, DateRange, Shell, btnGhost, btnPrimary, inputCls, tdCls, thCls } from '../../ui';
 
@@ -9,10 +9,16 @@ export default function AuditLog() {
   const [range, setRange] = useState({ from: '', to: '' });
   const [error, setError] = useState('');
 
+  const latestRequest = useRef(0); // only the newest request may update the list (defect D-04)
   const load = async () => {
+    const requestNo = ++latestRequest.current;
     setError('');
-    try { setList(await api<AuditEntry[]>(`/admin/audit${qs({ q: q.trim(), ...range, limit: '500' })}`)); }
-    catch (e) { setError((e as Error).message); }
+    try {
+      const rows = await api<AuditEntry[]>(`/admin/audit${qs({ q: q.trim(), ...range, limit: '500' })}`);
+      if (requestNo === latestRequest.current) setList(rows);
+    } catch (e) {
+      if (requestNo === latestRequest.current) setError((e as Error).message);
+    }
   };
   useEffect(() => { load(); }, [range]); // eslint-disable-line react-hooks/exhaustive-deps
 

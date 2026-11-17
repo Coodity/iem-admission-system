@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, fmtDate, openFile, qs, type Application, type FeeType } from '../api';
 import {
   Alert, DateRange, Shell, StatusBadge, btnDanger, btnGhost, btnPrimary, inputCls, tdCls, thCls,
@@ -13,7 +13,9 @@ const SORTS = [
   { v: 'name', label: 'Applicant name' },
 ];
 
-type ListRow = Pick<Application, '_id' | 'appId' | 'applicantName' | 'course' | 'campus' | 'status' | 'createdAt'>;
+const LIST_CAP = 1000; // matches the server's limit on /staff/applications (defect D-05)
+
+type ListRow =Pick<Application, '_id' | 'appId' | 'applicantName' | 'course' | 'campus' | 'status' | 'createdAt'>;
 
 export default function OfficerReview() {
   const [list, setList] = useState<ListRow[]>([]);
@@ -28,11 +30,15 @@ export default function OfficerReview() {
   const [rejectingApp, setRejectingApp] = useState(false);
   const [reason, setReason] = useState('');
 
+  // Only the newest request may update the list, so a slow earlier response can't overwrite a search (defect D-04)
+  const latestRequest = useRef(0);
   const loadList = useCallback(async () => {
+    const requestNo = ++latestRequest.current;
     try {
-      setList(await api<ListRow[]>(`/staff/applications${qs({ q: query.trim(), status, sort, ...range })}`));
+      const rows = await api<ListRow[]>(`/staff/applications${qs({ q: query.trim(), status, sort, ...range })}`);
+      if (requestNo === latestRequest.current) setList(rows);
     } catch (e) {
-      setError((e as Error).message);
+      if (requestNo === latestRequest.current) setError((e as Error).message);
     }
   }, [query, status, sort, range]);
 
@@ -100,7 +106,11 @@ export default function OfficerReview() {
       </form>
 
       <p className="text-xs text-gray-500">
-        <span className="font-semibold text-gray-700">{list.length}</span> application(s) found.
+        {list.length >= LIST_CAP ? (
+          <><span className="font-semibold text-gray-700">More than {LIST_CAP}</span> applications match; showing the first {LIST_CAP}. Narrow the search or filters.</>
+        ) : (
+          <><span className="font-semibold text-gray-700">{list.length}</span> application(s) found.</>
+        )}
         {' '}"Draft" means not yet submitted by the applicant.
       </p>
 

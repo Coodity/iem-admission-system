@@ -10,10 +10,12 @@ export default function Notifications() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    let current = true; // ignore a response that arrives after the filters changed (defect D-04)
     setError('');
     api<Note[]>(`/admin/notifications${qs({ status, ...range, limit: '500' })}`)
-      .then(setList)
-      .catch((e) => setError((e as Error).message));
+      .then((rows) => { if (current) setList(rows); })
+      .catch((e) => { if (current) setError((e as Error).message); });
+    return () => { current = false; };
   }, [status, range]);
 
   const failed = list.filter((n) => n.deliveryStatus === 'Failed').length;

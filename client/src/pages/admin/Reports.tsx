@@ -19,8 +19,12 @@ export default function Reports() {
   const query = qs({ type, ...range });
 
   useEffect(() => {
+    let current = true; // ignore a response that arrives after the filters changed (defect D-04)
     setError('');
-    api<Report>(`/admin/reports${query}`).then(setReport).catch((e) => setError((e as Error).message));
+    api<Report>(`/admin/reports${query}`)
+      .then((r) => { if (current) setReport(r); })
+      .catch((e) => { if (current) setError((e as Error).message); });
+    return () => { current = false; };
   }, [query]);
 
   async function exportAs(format: 'csv' | 'pdf') {

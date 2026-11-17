@@ -2,7 +2,15 @@
 import 'dotenv/config';
 import express from 'express';
 import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
+// Native bcrypt hashes on libuv worker threads, so concurrent logins run in parallel (load test LT-03/04).
+// Same $2a$/$2b$ hash format as bcryptjs, which stays as a fallback if the native module cannot load.
+let bcrypt;
+try {
+  bcrypt = (await import('bcrypt')).default;
+} catch {
+  bcrypt = (await import('bcryptjs')).default;
+  console.warn('Native bcrypt unavailable; using bcryptjs (slower logins under load)');
+}
 import cors from 'cors';
 import multer from 'multer';
 import PDFDocument from 'pdfkit';
@@ -254,7 +262,8 @@ const upload = multer({
     filename: (req, file, cb) =>
       cb(null, crypto.randomUUID() + path.extname(file.originalname).toLowerCase()),
   }),
-  limits: { fileSize: MAX_FILE_BYTES },
+  // busboy treats a file that reaches fileSize as too large, so allow exactly 5 MB with +1 (defect D-02)
+  limits: { fileSize: MAX_FILE_BYTES + 1 },
   fileFilter: (req, file, cb) => cb(null, ALLOWED_MIME.includes(file.mimetype)),
 });
 
@@ -265,13 +274,19 @@ function auth(permission) {
   return wrap(async (req, res, next) => {
     const token = (req.headers.authorization || '').replace(/^Bearer /, '');
     if (!TOKEN_RX.test(token)) return res.status(401).json({ error: 'Please log in to continue.' });
-    const session = await Session.findOne({ tokenHash: hashToken(token) });
+    // One round trip: the session plus its user's current role and active flag (load test LT-05/06)
+    const [session] = await Session.aggregate([
+      { $match: { tokenHash: hashToken(token) } },
+      { $limit: 1 },
+      { $lookup: { from: 'users', localField: 'userId', foreignField: '_id', as: 'user',
+        pipeline: [{ $project: { active: 1, role: 1, name: 1 } }] } },
+    ]);
     const now = Date.now();
     if (!session || now - session.lastSeen.getTime() > IDLE_MS) {
-      if (session) await session.deleteOne();
+      if (session) await Session.deleteOne({ _id: session._id });
       return res.status(401).json({ error: 'Session expired. Please log in again.' });
     }
-    const user = await User.findById(session.userId).select('active role name');
+    const user = session.user[0];
     if (!user || !user.active) {
       await Session.deleteMany({ userId: session.userId });
       return res.status(401).json({ error: 'Account unavailable' });
@@ -280,8 +295,7 @@ function auth(permission) {
       return res.status(403).json({ error: 'You do not have access to this page' });
     }
     if (now - session.lastSeen.getTime() > TOUCH_MS) {
-      session.lastSeen = new Date(now);
-      await session.save();
+      await Session.updateOne({ _id: session._id }, { $set: { lastSeen: new Date(now) } });
     }
     req.user = { id: String(user._id), role: user.role, name: user.name };
     req.sessionId = session._id;
@@ -474,7 +488,8 @@ app.post('/api/applications', own, wrap(async (req, res) => {
   if (!String(qualification).trim() || String(qualification).length > 50) {
     return res.status(400).json({ error: 'Enter your highest qualification (up to 50 characters)' });
   }
-  const score = Number(marks);
+  // Blank marks must not be read as 0 (Number('') === 0) (defect D-01)
+  const score = marks === null || marks === undefined || String(marks).trim() === '' ? NaN : Number(marks);
   if (!Number.isFinite(score) || score < 0 || score > 100) {
     return res.status(400).json({ error: 'Enter marks between 0 and 100' });
   }
@@ -614,7 +629,8 @@ app.get('/api/staff/applications', review, wrap(async (req, res) => {
   const apps = await Application.find(filter)
     .select('appId applicantName course campus status createdAt updatedAt')
     .sort(sort)
-    .limit(1000);
+    .limit(1000)
+    .lean();
   res.json(apps);
 }));
 
