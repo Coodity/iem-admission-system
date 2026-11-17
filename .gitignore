@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Secrets: copy server/.env.example to server/.env and fill it in
+.env
+.env.*
+!.env.example
+
+# Uploaded applicant documents (runtime data)
+server/uploads/
+
+# Build output and logs
+dist/
+build/
+*.log
+.vite/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Figma Make image placeholders (Git LFS pointers whose images were never downloaded; unused)
+client/src/assets/wireframe-reference.png
+client/src/imports/image.png
