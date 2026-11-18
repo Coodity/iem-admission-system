@@ -1,10 +1,12 @@
 # Dependencies
 node_modules/
 
-# Secrets: copy server/.env.example to server/.env and fill it in
+# Environment files. server/.env is committed on purpose so the whole team
+# can run the app against the shared database (owner's decision).
 .env
 .env.*
 !.env.example
+!server/.env
 
 # Uploaded applicant documents (runtime data)
 server/uploads/
